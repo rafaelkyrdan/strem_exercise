@@ -17,7 +17,6 @@ case class BatteryData(
                         stateOfChargeInPercent: Int
                       )
 
-
 case class CombinedData(
                          timestamp: Instant,
                          socketId: String,
@@ -72,13 +71,11 @@ object StreamProcessor extends IOApp.Simple {
                     ): Stream[IO, CombinedData] = {
 
     Stream.eval(Ref.of[IO, Map[String, Int]](Map.empty)).flatMap { stateRef =>
+      val chargingEvents = chargingStream.map(c => ChargingEvent(c): Event)
+      val batteryEvents = batteryStream.map(b => BatteryEvent(b): Event)
 
-      val chargingTagged = chargingStream.map(Left(_))
-      val batteryTagged = batteryStream.map(Right(_))
-
-
-      chargingTagged.merge(batteryTagged).evalMap {
-        case Left(charging) =>
+      mergeByTimestamp(chargingEvents, batteryEvents).evalMap {
+        case ChargingEvent(charging) =>
           // Charging event: read state and emit output
           stateRef.get.map { batteryState =>
             val stateOfCharge = batteryState.getOrElse(charging.vehicleId, 0)
@@ -91,8 +88,8 @@ object StreamProcessor extends IOApp.Simple {
             ))
           }
 
-        case Right(battery) =>
-
+        case BatteryEvent(battery) =>
+          // Battery event: update state, don't emit
           stateRef.update(state =>
             state.updated(battery.vehicleId, battery.stateOfChargeInPercent)
           ).as(None)
@@ -116,7 +113,7 @@ object StreamProcessor extends IOApp.Simple {
       BatteryData(Instant.parse("2023-11-02T17:08:49Z"), "v124", 80)
     ).covary[IO]
 
-
+    
     combineStreams(chargingData, batteryData)
       .evalMap(output => IO.println(output))
       .compile
